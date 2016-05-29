@@ -6,10 +6,15 @@
 #define INITIAL_TTL 4
 #define BUFSIZE     64
 #define UART_IN     Serial1
-#define UART_OUT    Serial2
-#define BAUD        (115200*2)
+#define UART_OUT    Serial1
 #define PIEZO_PIN   A9
-#define INTERVAL    250  /* After how many milliseconds should we send data? */
+
+
+//#define BAUD        (19200)
+#define BAUD        (115200*4)
+
+//#define INTERVAL    250  /* After how many milliseconds should we send data? */
+#define INTERVAL     10  /* After how many milliseconds should we send data? */
 
 #define printf(...)     Serial.print(format(__VA_ARGS__))
 #define printfln(...)   Serial.println(format(__VA_ARGS__))
@@ -33,7 +38,7 @@ char *format(const char *fmt, ... ) {
     return buf;
 }
 
-void hexdump_packet(char *prefix, struct packet *p) {
+void hexdump_packet(const char *prefix, struct packet *p) {
 	printf("%s", prefix);
 	for (size_t i = 0; i < sizeof(struct packet) + p->data_len; i++)
 		printf(" %02x", ((uint8_t*)p)[i]);
@@ -56,6 +61,8 @@ void send_packet(struct packet *p) {
     UART_OUT.write(ZIGAMORPH);
     UART_OUT.write((uint8_t*)p, sizeof(struct packet) + p->data_len);
     UART_OUT.write(ZIGAMORPH);
+
+    //hexdump_packet("Send:", p);
 }
 
 /*
@@ -64,31 +71,45 @@ void send_packet(struct packet *p) {
 void packet_handler(uint8_t *buf, size_t len) {
     struct packet *p = (struct packet *) buf;
 
+    static int i;
+    if (++i == 80) {
+        i = 0;
+        printf("|\r\n%7lu ", millis());
+    }
+
     // Ensure the packet is at least the size of our header
     if (len < sizeof(struct packet)) {
-        debug("Runt");
+        //debug("Runt");
+        printf("R");
         return;
     }
 
     // Ensure the payload length matches the size of the packet we received
     if (len != sizeof(struct packet) + p->data_len) {
-        debug("Size mismatch");
+        //debug("Size mismatch");
+        printf("S");
         return;
     }
 
     // Verify checksum
     if (p->checksum != calculate_checksum(p)) {
-        debug("Checksum failure");
+        //debug("Checksum failure");
+        printf("C");
         return;
     }
 
     // Decrement the TTL, and do not forward it he TTL has reached zero
     p->ttl--;
-    if (p->ttl < 1)
+    if (p->ttl < 1) {
+        printf(".");
         return;
+    }
 
     // Forward the packet
+    //hexdump_packet("Recv:", p);
     send_packet(p);
+
+    printf(".");
 }
 
 /*
@@ -100,8 +121,13 @@ void bus_handler(int max) {
     static size_t len;
     static bool overflow;
 
-    while (max-- && UART_IN.available()) {
-        int c;
+    int c;
+
+    while (UART_IN.available())
+    {
+        if (max-- == 0) {
+            break;
+        }
 
         c = UART_IN.read();
 
@@ -127,8 +153,10 @@ void read_piezo(void) {
 
     uint16_t val = analogRead(PIEZO_PIN);
 
-    if (last_sent + INTERVAL < millis())
+    if (millis() < last_sent + INTERVAL) {
+        //printfln("Not yet.  %lu.  %lu", last_sent + INTERVAL, millis());
         return;
+    }
 
     p->ttl = INITIAL_TTL;
     p->data_len = 2;
@@ -148,7 +176,7 @@ void setup() {
     UART_OUT.begin(BAUD);
     UART_IN.begin(BAUD);
 
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 8; i++) {
         digitalWrite(LED_BUILTIN, HIGH);
         delay(33);
 
