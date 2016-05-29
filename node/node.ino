@@ -2,18 +2,14 @@
 
 #include <stdarg.h>
 
-#define INITIAL_TTL 4
-#define BUFSIZE     64
+#define MAX_HOPS    8
+#define PIEZO_PIN   A9
+#define BAUD        1000000
+#define INTERVAL    10
 #define UART_IN     Serial1
 #define UART_OUT    Serial1
-#define PIEZO_PIN   A9
 
-//#define BAUD        (19200)
-//#define BAUD        (115200*4)
-#define BAUD        (1000000)
-
-//#define INTERVAL    250  /* After how many milliseconds should we send data? */
-#define INTERVAL        5  /* After how many milliseconds should we send data? */
+#define BUFSIZE     64
 
 #define printf(...)     Serial.print(format(__VA_ARGS__))
 #define printfln(...)   Serial.println(format(__VA_ARGS__))
@@ -26,7 +22,7 @@
 #define TFESC   0xDD  // Transposed Frame Escape
 
 struct packet {
-    uint8_t ttl;
+    uint8_t hops;
     uint8_t checksum;
     uint8_t data_len;
     uint8_t data[];
@@ -58,7 +54,7 @@ void hexdump_packet(const char *prefix, struct packet *p)
  */
 int calculate_checksum(struct packet *p)
 {
-	int checksum = p->ttl ^ p->data_len;
+	int checksum = p->hops ^ p->data_len;
 	for (int i = 0; i < p->data_len; i++)
 		checksum ^= p->data[i];
 	return checksum;
@@ -100,7 +96,7 @@ void send_packet(struct packet *p)
 }
 
 /*
- * Parses packet headers, and forwards packets who's TTL has not expired
+ * Parses packet headers, and forwards packets who's hops has not hit MAX_HOPS
  */
 void packet_handler(uint8_t *buf, size_t len)
 {
@@ -133,9 +129,9 @@ void packet_handler(uint8_t *buf, size_t len)
         return;
     }
 
-    // Decrement the TTL, and do not forward it he TTL has reached zero
-    p->ttl--;
-    if (p->ttl < 1) {
+    // Increment hope count, and do not forward it has reached MAX_HOPS
+    p->hops++;
+    if (p->hops > MAX_HOPS) {
         printf("."); // printf("<");
         return;
     }
@@ -209,7 +205,7 @@ void read_piezo(void) {
     else
         last_sent = millis();
 
-    p->ttl = INITIAL_TTL;
+    p->hops = 1;
     p->data_len = 2;
     p->data[0] = (val >> 8) & 0xff;
     p->data[1] = (val >> 0) & 0xff;
