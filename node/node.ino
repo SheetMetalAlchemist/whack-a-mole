@@ -9,7 +9,8 @@
 #define PIEZO_PIN   A9
 
 //#define BAUD        (19200)
-#define BAUD        (115200*4)
+//#define BAUD        (115200*4)
+#define BAUD        (1000000)
 
 //#define INTERVAL    250  /* After how many milliseconds should we send data? */
 #define INTERVAL        5  /* After how many milliseconds should we send data? */
