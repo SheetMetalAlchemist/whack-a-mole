@@ -2,23 +2,27 @@
 
 #include <stdarg.h>
 
-#define ZIGAMORPH	'!'
 #define INITIAL_TTL 4
 #define BUFSIZE     64
 #define UART_IN     Serial1
 #define UART_OUT    Serial1
 #define PIEZO_PIN   A9
 
-
 //#define BAUD        (19200)
 #define BAUD        (115200*4)
 
 //#define INTERVAL    250  /* After how many milliseconds should we send data? */
-#define INTERVAL     10  /* After how many milliseconds should we send data? */
+#define INTERVAL        5  /* After how many milliseconds should we send data? */
 
 #define printf(...)     Serial.print(format(__VA_ARGS__))
 #define printfln(...)   Serial.println(format(__VA_ARGS__))
 #define debug           printfln
+
+// KISS constants from http://www.ka9q.net/papers/kiss.html
+#define FEND    0xC0  // Frame End
+#define FESC    0xDB  // Frame Escape
+#define TFEND   0xDC  // Transposed Frame End
+#define TFESC   0xDD  // Transposed Frame Escape
 
 struct packet {
     uint8_t ttl;
@@ -29,7 +33,8 @@ struct packet {
 
 /**/
 
-char *format(const char *fmt, ... ) {
+char *format(const char *fmt, ... )
+{
     static char buf[128];
     va_list args;
     va_start (args, fmt);
@@ -38,7 +43,8 @@ char *format(const char *fmt, ... ) {
     return buf;
 }
 
-void hexdump_packet(const char *prefix, struct packet *p) {
+void hexdump_packet(const char *prefix, struct packet *p)
+{
 	printf("%s", prefix);
 	for (size_t i = 0; i < sizeof(struct packet) + p->data_len; i++)
 		printf(" %02x", ((uint8_t*)p)[i]);
@@ -49,26 +55,54 @@ void hexdump_packet(const char *prefix, struct packet *p) {
  * Calculates the CRC of the packet, which is the XOR of every field of the
  * header *except* the CRC, and also the payload data.
  */
-int calculate_checksum(struct packet *p) {
+int calculate_checksum(struct packet *p)
+{
 	int checksum = p->ttl ^ p->data_len;
 	for (int i = 0; i < p->data_len; i++)
 		checksum ^= p->data[i];
 	return checksum;
 }
 
-void send_packet(struct packet *p) {
-    p->checksum = calculate_checksum(p);
-    UART_OUT.write(ZIGAMORPH);
-    UART_OUT.write((uint8_t*)p, sizeof(struct packet) + p->data_len);
-    UART_OUT.write(ZIGAMORPH);
+void send_packet(struct packet *p)
+{
+    uint8_t *buf;
+    size_t i;
 
-    //hexdump_packet("Send:", p);
+    buf = (uint8_t*) p;
+
+    p->checksum = calculate_checksum(p);
+
+    UART_OUT.write(FEND);
+
+    for (i = 0; i < sizeof(struct packet) + p->data_len; i++)
+    {
+        switch (buf[i])
+        {
+            case FEND:
+                UART_OUT.write(FESC);
+                UART_OUT.write(TFEND);
+                break;
+
+            case FESC:
+                UART_OUT.write(FESC);
+                UART_OUT.write(TFESC);
+                break;
+
+            default:
+                UART_OUT.write(buf[i]);
+        }
+    }
+
+    UART_OUT.write(FEND);
+
+    // hexdump_packet("Send:", p);
 }
 
 /*
  * Parses packet headers, and forwards packets who's TTL has not expired
  */
-void packet_handler(uint8_t *buf, size_t len) {
+void packet_handler(uint8_t *buf, size_t len)
+{
     struct packet *p = (struct packet *) buf;
 
     static int i;
@@ -101,7 +135,7 @@ void packet_handler(uint8_t *buf, size_t len) {
     // Decrement the TTL, and do not forward it he TTL has reached zero
     p->ttl--;
     if (p->ttl < 1) {
-        printf(".");
+        printf("."); // printf("<");
         return;
     }
 
@@ -113,30 +147,46 @@ void packet_handler(uint8_t *buf, size_t len) {
 }
 
 /*
- * Reads up to @max characters from UART_IN.  If a zigamorph is found,
+ * Reads up to @max characters from UART_IN.  If a FEND is found,
  * dispatches the buffer for packet parsing.
  */
 void bus_handler(int max) {
     static uint8_t buf[BUFSIZE];
     static size_t len;
     static bool overflow;
+    static int escape;
 
     int c;
 
-    while (UART_IN.available())
+    while (max-- && UART_IN.available())
     {
-        if (max-- == 0) {
-            break;
-        }
-
         c = UART_IN.read();
 
-        if (c == ZIGAMORPH) {
-            if (len && !overflow)
-                packet_handler(buf, len);
-            len = 0;
-            overflow = false;
-            continue;
+        if (escape) {
+            escape = 0;
+            if (c == TFEND) {
+                c = FEND;
+            }
+            else if (c == TFESC) {
+                c = FESC;
+            }
+            else {
+                debug("T"); // Erroneous frame escape
+            }
+        }
+        else {
+            if (c == FESC) {
+                escape = 1;
+                continue;
+            }
+
+            if (c == FEND) {
+                if (len && !overflow)
+                    packet_handler(buf, len);
+                len = 0;
+                overflow = false;
+                continue;
+            }
         }
 
         if (len < BUFSIZE)
@@ -153,18 +203,16 @@ void read_piezo(void) {
 
     uint16_t val = analogRead(PIEZO_PIN);
 
-    if (millis() < last_sent + INTERVAL) {
-        //printfln("Not yet.  %lu.  %lu", last_sent + INTERVAL, millis());
+    if (millis() < last_sent + INTERVAL)
         return;
-    }
+    else
+        last_sent = millis();
 
     p->ttl = INITIAL_TTL;
     p->data_len = 2;
     p->data[0] = (val >> 8) & 0xff;
     p->data[1] = (val >> 0) & 0xff;
     send_packet(p);
-
-    last_sent = millis();
 }
 
 void setup() {
