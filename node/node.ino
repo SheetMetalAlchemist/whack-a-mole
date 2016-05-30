@@ -31,6 +31,9 @@ struct packet {
 
 /**/
 
+//uint16_t cached1[4];
+//uint16_t cached2[4];
+//uint16_t *cached = cached1;
 uint16_t cached[4];
 
 char *format(const char *fmt, ... )
@@ -196,6 +199,7 @@ void read_piezo(void) {
     static unsigned long last_sent;
     struct packet p;
     uint16_t val;
+    //char line[128];
 
     if (millis() < last_sent + INTERVAL)
         return;
@@ -203,11 +207,28 @@ void read_piezo(void) {
     val = analogRead(PIEZO_PIN);
     cached[0] = val;
 
-    printf("%4d  %4d  %4d  %4d\r\n",
-        cached[3],
-        cached[2],
-        cached[1],
-        cached[0]);
+    int i;
+    int hit = 0;
+
+    for (i = 0; i < 4; i++) {
+        if (cached[i] > 500)
+            hit = 1;
+    }
+
+    if (hit) {
+        printf("%7lu  ", millis());
+
+        for (i = 0; i < 4;i ++) {
+            if (cached[i] > 500)
+                printf(" %4d", cached[i]);
+            else
+                printf(" ____");
+        }
+        printf("\r\n");
+    }
+
+    for (i = 0; i < 4; i++)
+        cached[i] = 0;
 
     p.hops = 1;
     p.data[0] = (val >> 8) & 0xff;
@@ -215,6 +236,13 @@ void read_piezo(void) {
     send_packet(&p);
 
     last_sent = millis();
+
+    /*
+    if (cached == cached1)
+        cached = cached2;
+    else
+        cached = cached1;
+    */
 }
 
 void setup() {
