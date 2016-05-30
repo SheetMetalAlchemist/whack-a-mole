@@ -3,11 +3,13 @@
 #include <stdarg.h>
 
 #define MAX_HOPS    8
-#define PIEZO_PIN   A9
+#define PIEZO_PIN   A8
 #define BAUD        1000000
-#define INTERVAL    10
-#define UART_IN     Serial1
-#define UART_OUT    Serial1
+
+#define INTERVAL    5
+
+#define UART_IN     Serial2
+#define UART_OUT    Serial2
 
 #define BUFSIZE     64
 
@@ -24,11 +26,12 @@
 struct packet {
     uint8_t hops;
     uint8_t checksum;
-    uint8_t data_len;
-    uint8_t data[];
+    uint8_t data[2];
 };
 
 /**/
+
+uint16_t cached[4];
 
 char *format(const char *fmt, ... )
 {
@@ -40,24 +43,16 @@ char *format(const char *fmt, ... )
     return buf;
 }
 
-void hexdump_packet(const char *prefix, struct packet *p)
+void dump_packet(const char *prefix, struct packet *p)
 {
-	printf("%s", prefix);
-	for (size_t i = 0; i < sizeof(struct packet) + p->data_len; i++)
-		printf(" %02x", ((uint8_t*)p)[i]);
-    printf("\r\n");
+    printf("%sHops %d, Checksum %2x, %2x%02x\r\n",
+        prefix,
+        p->hops, p->checksum, p->data[0], p->data[1]);
 }
 
-/*
- * Calculates the CRC of the packet, which is the XOR of every field of the
- * header *except* the CRC, and also the payload data.
- */
 int calculate_checksum(struct packet *p)
 {
-	int checksum = p->hops ^ p->data_len;
-	for (int i = 0; i < p->data_len; i++)
-		checksum ^= p->data[i];
-	return checksum;
+	return p->hops ^ p->data[0] ^ p->data[1];
 }
 
 void send_packet(struct packet *p)
@@ -71,7 +66,7 @@ void send_packet(struct packet *p)
 
     UART_OUT.write(FEND);
 
-    for (i = 0; i < sizeof(struct packet) + p->data_len; i++)
+    for (i = 0; i < sizeof(struct packet); i++)
     {
         switch (buf[i])
         {
@@ -91,32 +86,31 @@ void send_packet(struct packet *p)
     }
 
     UART_OUT.write(FEND);
+    //dump_packet("Send: ", p);
 
-    // hexdump_packet("Send:", p);
+    /*
+    for (i = 0; i < p->hops; i++)
+        printf("     ");
+    printf("%5d\r\n", ((p->data[0] << 8) | p->data[1]));
+    */
 }
 
 /*
- * Parses packet headers, and forwards packets who's hops has not hit MAX_HOPS
+ * Parses packet, forwards packets who's hops has not hit MAX_HOPS
  */
 void packet_handler(uint8_t *buf, size_t len)
 {
     struct packet *p = (struct packet *) buf;
 
+    /*
     static int i;
     if (++i == 80) {
         i = 0;
         printf("|\r\n%7lu ", millis());
     }
+    */
 
-    // Ensure the packet is at least the size of our header
-    if (len < sizeof(struct packet)) {
-        //debug("Runt");
-        printf("R");
-        return;
-    }
-
-    // Ensure the payload length matches the size of the packet we received
-    if (len != sizeof(struct packet) + p->data_len) {
+    if (len != sizeof(struct packet)) {
         //debug("Size mismatch");
         printf("S");
         return;
@@ -129,6 +123,10 @@ void packet_handler(uint8_t *buf, size_t len)
         return;
     }
 
+    //dump_packet("Recv: ", p);
+
+    cached[p->hops] = (p->data[0] <<8) | p->data[1];
+
     // Increment hope count, and do not forward it has reached MAX_HOPS
     p->hops++;
     if (p->hops > MAX_HOPS) {
@@ -137,10 +135,9 @@ void packet_handler(uint8_t *buf, size_t len)
     }
 
     // Forward the packet
-    //hexdump_packet("Recv:", p);
     send_packet(p);
 
-    printf(".");
+    //printf(".");
 }
 
 /*
@@ -150,10 +147,10 @@ void packet_handler(uint8_t *buf, size_t len)
 void bus_handler(int max) {
     static uint8_t buf[BUFSIZE];
     static size_t len;
-    static bool overflow;
+    static int overflow;
     static int escape;
 
-    int c;
+    char c;
 
     while (max-- && UART_IN.available())
     {
@@ -169,6 +166,8 @@ void bus_handler(int max) {
             }
             else {
                 debug("T"); // Erroneous frame escape
+                len = 0;
+                continue;
             }
         }
         else {
@@ -181,7 +180,7 @@ void bus_handler(int max) {
                 if (len && !overflow)
                     packet_handler(buf, len);
                 len = 0;
-                overflow = false;
+                overflow = 0;
                 continue;
             }
         }
@@ -189,27 +188,33 @@ void bus_handler(int max) {
         if (len < BUFSIZE)
             buf[len++] = c;
         else
-            overflow = true;
+            overflow = 1;
     }
 }
 
 void read_piezo(void) {
     static unsigned long last_sent;
-    static uint8_t buf[sizeof(struct packet) + 2];
-    static struct packet *p = (struct packet *)&buf;
-
-    uint16_t val = analogRead(PIEZO_PIN);
+    struct packet p;
+    uint16_t val;
 
     if (millis() < last_sent + INTERVAL)
         return;
-    else
-        last_sent = millis();
 
-    p->hops = 1;
-    p->data_len = 2;
-    p->data[0] = (val >> 8) & 0xff;
-    p->data[1] = (val >> 0) & 0xff;
-    send_packet(p);
+    val = analogRead(PIEZO_PIN);
+    cached[0] = val;
+
+    printf("%4d  %4d  %4d  %4d\r\n",
+        cached[3],
+        cached[2],
+        cached[1],
+        cached[0]);
+
+    p.hops = 1;
+    p.data[0] = (val >> 8) & 0xff;
+    p.data[1] = (val >> 0) & 0xff;
+    send_packet(&p);
+
+    last_sent = millis();
 }
 
 void setup() {
