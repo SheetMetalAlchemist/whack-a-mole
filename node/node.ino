@@ -2,6 +2,8 @@
 
 #include <stdarg.h>
 
+#define THRESHOLD   0
+
 #define MAX_HOPS    8
 #define PIEZO_PIN   A8
 #define BAUD        1000000
@@ -211,7 +213,7 @@ void read_piezo(void) {
     int hit = 0;
 
     for (i = 0; i < 4; i++) {
-        if (cached[i] > 500)
+        if (cached[i] >= THRESHOLD)
             hit = 1;
     }
 
@@ -219,7 +221,7 @@ void read_piezo(void) {
         printf("%7lu  ", millis());
 
         for (i = 0; i < 4;i ++) {
-            if (cached[i] > 500)
+            if (cached[i] >= THRESHOLD)
                 printf(" %4d", cached[i]);
             else
                 printf(" ____");
