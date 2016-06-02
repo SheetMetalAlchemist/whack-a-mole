@@ -232,7 +232,7 @@ void read_piezo(void) {
     for (i = 0; i < 4; i++)
         cached[i] = 0;
 
-    p.hops = 1;
+    p.hops = 0;
     p.data[0] = (val >> 8) & 0xff;
     p.data[1] = (val >> 0) & 0xff;
     send_packet(&p);
