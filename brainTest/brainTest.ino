@@ -8,7 +8,7 @@
 #define PIEZO_PIN   A8
 #define BAUD        1000000
 
-#define INTERVAL    5   // 200 Hz
+#define INTERVAL    5
 
 #define UART_IN     Serial2
 #define UART_OUT    Serial2
@@ -33,7 +33,10 @@ struct packet {
 
 /**/
 
-uint16_t cached[MAX_HOPS];
+//uint16_t cached1[4];
+//uint16_t cached2[4];
+//uint16_t *cached = cached1;
+uint16_t cached[4];
 
 char *format(const char *fmt, ... )
 {
@@ -127,14 +130,14 @@ void packet_handler(uint8_t *buf, size_t len)
 
     //dump_packet("Recv: ", p);
 
+    cached[p->hops] = (p->data[0] <<8) | p->data[1];
+
     // Increment hope count, and do not forward it has reached MAX_HOPS
     p->hops++;
     if (p->hops > MAX_HOPS) {
         printf("."); // printf("<");
         return;
     }
-
-    cached[p->hops] = (p->data[0] <<8) | p->data[1];
 
     // Forward the packet
     send_packet(p);
@@ -198,7 +201,7 @@ void read_piezo(void) {
     static unsigned long last_sent;
     struct packet p;
     uint16_t val;
-    int i;
+    //char line[128];
 
     if (millis() < last_sent + INTERVAL)
         return;
@@ -206,21 +209,42 @@ void read_piezo(void) {
     val = analogRead(PIEZO_PIN);
     cached[0] = val;
 
-    printf("%7lu  ", millis());
+    int i;
+    int hit = 0;
 
-    //for (i = 0; i < MAX_HOPS;i ++) {
-    for (i = 0; i < 4;i ++) {
-        printf("     %4d", cached[i]);
-        cached[i] = 0;
+    for (i = 0; i < 4; i++) {
+        if (cached[i] >= THRESHOLD)
+            hit = 1;
     }
 
-    printf("\r\n");
+    if (hit) {
+        printf("%7lu  ", millis());
+
+        for (i = 0; i < 4;i ++) {
+            if (cached[i] >= THRESHOLD)
+                printf(" %4d", cached[i]);
+            else
+                printf(" ____");
+        }
+        printf("\r\n");
+    }
+
+    for (i = 0; i < 4; i++)
+        cached[i] = 0;
 
     p.hops = 0;
     p.data[0] = (val >> 8) & 0xff;
     p.data[1] = (val >> 0) & 0xff;
     send_packet(&p);
+
     last_sent = millis();
+
+    /*
+    if (cached == cached1)
+        cached = cached2;
+    else
+        cached = cached1;
+    */
 }
 
 void setup() {
