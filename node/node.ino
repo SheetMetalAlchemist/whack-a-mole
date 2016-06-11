@@ -204,6 +204,11 @@ void read_piezo(void) {
         return;
 
     val = analogRead(PIEZO_PIN);
+
+    // This makes it easier to determine if a node is online or not
+    if (val == 0)
+        val = 1;
+
     cached[0] = val;
 
     printf("%7lu  ", millis());
